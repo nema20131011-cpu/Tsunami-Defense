@@ -2,8 +2,10 @@
 TSUNAMI DEFENSE - Defend the city against ever-bigger waves!
 =============================================================
 How to play:
-  * Waves come from the ocean (left) and move toward the city (right).
-  * Between waves is BUILD phase. Click a glowing ground slot to select it,
+  * TOP-DOWN view: waves roll in from the ocean (left) down one of 3 lanes
+    toward the city (right). Walls block only their own lane; towers shoot
+    across lanes.
+  * Between waves is BUILD phase. Click one of the 12 build plots to select it,
     then build a defense (buttons at the bottom, or keys 1 / 2 / 3):
         1 = Wall        $50   - blocks the wave, soaks up damage
         2 = Cannon      $100  - shoots the wave, reduces its power
@@ -34,12 +36,15 @@ import pygame
 
 # ---------------------------------------------------------------- constants
 WIDTH, HEIGHT = 1280, 720
-GROUND_Y = 620
-CITY_X = 990
-OCEAN_W = 470
+CITY_X = 1020
+OCEAN_W = 430
 FPS = 60
 
-SLOT_XS = [545, 630, 715, 800, 885]
+# top-down map: ocean (left) -> beach -> 3 lanes of land -> city (right)
+LANE_YS = [150, 330, 510]
+SLOT_COLS_X = [575, 695, 815, 925]
+SLOTS = [(x, y) for y in LANE_YS for x in SLOT_COLS_X]  # 12 build plots
+REPAIR_BUTTON = pygame.Rect(1010, HEIGHT - 68, 254, 56)
 
 COSTS = {"wall": 50, "cannon": 100, "frost": 120}
 UPGRADE_COST = 75
@@ -47,7 +52,7 @@ REPAIR_COST = 75
 REPAIR_AMOUNT = 20
 SELL_REFUND = 0.7
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 UPDATE_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "update_config.json")
 
 # colours
@@ -314,7 +319,10 @@ class Wave:
 
     def __init__(self, number, scale=1.0):
         self.number = number
-        self.height = min(480, (120 + number * 34) * scale)
+        self.lane = random.choice(LANE_YS)
+        self.y = self.lane
+        self.thickness = min(150, (104 + number * 4) * scale)
+        self.height = self.thickness
         self.width = 150 + number * 6
         self.max_hp = (110 * (1.55 ** (number - 1))) * scale
         self.hp = self.max_hp
@@ -337,7 +345,7 @@ class Wave:
         speed = self.speed * (0.55 if self.is_slowed(now) else 1.0)
         hitting = None
         for b in blockers:
-            if b.kind == "wall" and b.hp > 0:
+            if b.kind == "wall" and b.hp > 0 and abs(b.y - self.y) < 78:
                 if self.front >= b.x - 4 and self.x < b.x:
                     hitting = b
                     break
@@ -346,32 +354,28 @@ class Wave:
         return hitting
 
     def draw(self, surf, now):
-        h = self.height * max(0.12, self.hp / self.max_hp) if self.max_hp else self.height
-        top = GROUND_Y - h
-        bob = math.sin(now * 2.2 + self.bob_phase) * 5
-        top += bob
-        # body - a big curling wave shape
-        pts = []
-        steps = 18
-        for i in range(steps + 1):
-            t = i / steps
-            px = self.x + t * self.width
-            # crest curls forward at the top
-            py = top + (t ** 2.2) * (GROUND_Y - top) * 0.92
-            pts.append((px, py))
-        body = pts + [(self.front, GROUND_Y), (self.x, GROUND_Y)]
+        # top-down: a band of water rolling right, foam along its front edge.
+        # The band shrinks as the wave loses HP.
+        thick = self.thickness * max(0.25, self.hp / self.max_hp) if self.max_hp else self.thickness
+        top = self.y - thick / 2
         colour = (35, 130, 205) if not self.is_slowed(now) else (70, 165, 220)
-        pygame.draw.polygon(surf, colour, body)
-        pygame.draw.polygon(surf, (90, 190, 240), pts, 0) if False else None
-        # foam crest
-        for (px, py) in pts[::3]:
-            pygame.draw.circle(surf, WHITE, (int(px), int(py)), random.randint(4, 9))
-        pygame.draw.circle(surf, WHITE, (int(self.front - 8), int(top + 14)), 16)
-        pygame.draw.circle(surf, WHITE, (int(self.front - 30), int(top + 8)), 11)
-        # HP bar
+        body = pygame.Rect(int(self.x), int(top), int(self.width), int(thick))
+        pygame.draw.rect(surf, colour, body, border_radius=10)
+        pygame.draw.rect(surf, (90, 190, 240), body, 3, border_radius=10)
+        # moving foam stripes inside the band
+        for i in range(4):
+            sx = self.x + ((now * 60 + i * 47) % max(20, self.width))
+            pygame.draw.line(surf, (120, 200, 245), (sx, top + 8), (sx - 14, top + thick - 8), 3)
+        # foam front edge
+        steps = max(3, int(thick // 18))
+        for i in range(steps + 1):
+            fy = top + (thick * i / steps)
+            r = 8 + 3 * math.sin(now * 6 + i * 1.7 + self.bob_phase)
+            pygame.draw.circle(surf, WHITE, (int(self.front - 4), int(fy)), max(4, int(r)))
+        # HP bar above the band
         if self.hp < self.max_hp:
             w = 110
-            bx, by = self.x + self.width / 2 - w / 2, max(8, top - 26)
+            bx, by = self.x + self.width / 2 - w / 2, max(60, top - 24)
             pygame.draw.rect(surf, BLACK, (bx - 1, by - 1, w + 2, 10))
             pygame.draw.rect(surf, RED, (bx, by, w, 8))
             pygame.draw.rect(surf, GREEN, (bx, by, w * max(0, self.hp / self.max_hp), 8))
@@ -381,7 +385,7 @@ class Structure:
     def __init__(self, kind, slot):
         self.kind = kind
         self.slot = slot
-        self.x = SLOT_XS[slot]
+        self.x, self.y = SLOTS[slot]
         self.level = 1
         self.cooldown = 0.0
         if kind == "wall":
@@ -416,32 +420,36 @@ class Structure:
 
     def rect(self):
         if self.kind == "wall":
-            return pygame.Rect(self.x - 26, GROUND_Y - 150, 52, 150)
-        return pygame.Rect(self.x - 26, GROUND_Y - 78, 52, 78)
+            return pygame.Rect(self.x - 16, self.y - 58, 32, 116)
+        return pygame.Rect(self.x - 28, self.y - 28, 56, 56)
 
     def draw(self, surf, selected, font):
+        # top-down: structures sit on their plot, seen from above
         r = self.rect()
         if selected:
-            pygame.draw.rect(surf, GOLD, r.inflate(8, 8), 3, border_radius=6)
+            pygame.draw.rect(surf, GOLD, r.inflate(10, 10), 3, border_radius=6)
             if self.range:
-                pygame.draw.circle(surf, (255, 255, 255), (self.x, GROUND_Y - 40), self.range, 1)
+                pygame.draw.circle(surf, (255, 255, 255), (self.x, self.y), self.range, 1)
         if self.kind == "wall":
+            # a barrier segment stretched across its lane
             pygame.draw.rect(surf, (130, 130, 140), r, border_radius=4)
             pygame.draw.rect(surf, (165, 165, 175), r, 3, border_radius=4)
-            for yy in range(r.top + 18, r.bottom - 6, 26):
+            for yy in range(r.top + 16, r.bottom - 6, 24):
                 pygame.draw.line(surf, (100, 100, 110), (r.left + 4, yy), (r.right - 4, yy), 2)
         elif self.kind == "cannon":
-            pygame.draw.rect(surf, (70, 80, 95), (self.x - 24, GROUND_Y - 26, 48, 26), border_radius=4)
-            pygame.draw.circle(surf, (45, 55, 70), (self.x, GROUND_Y - 30), 20)
-            pygame.draw.rect(surf, BLACK, (self.x - 34, GROUND_Y - 38, 30, 9), border_radius=4)
-            pygame.draw.circle(surf, GOLD, (self.x, GROUND_Y - 30), 6)
+            pygame.draw.rect(surf, (70, 80, 95), r, border_radius=6)
+            pygame.draw.rect(surf, (95, 105, 120), r, 2, border_radius=6)
+            pygame.draw.circle(surf, (45, 55, 70), (self.x, self.y), 19)
+            pygame.draw.rect(surf, BLACK, (self.x - 50, self.y - 5, 32, 10), border_radius=4)  # barrel points at the ocean
+            pygame.draw.circle(surf, GOLD, (self.x, self.y), 6)
         else:  # frost
-            pygame.draw.rect(surf, (90, 160, 200), (self.x - 24, GROUND_Y - 26, 48, 26), border_radius=4)
-            pygame.draw.circle(surf, ICE, (self.x, GROUND_Y - 42), 19)
-            pygame.draw.circle(surf, WHITE, (self.x, GROUND_Y - 42), 9)
-        # level pips + hp bar (damaged only)
+            pygame.draw.rect(surf, (90, 160, 200), r, border_radius=6)
+            pygame.draw.rect(surf, (170, 225, 250), r, 2, border_radius=6)
+            pygame.draw.circle(surf, ICE, (self.x, self.y), 18)
+            pygame.draw.circle(surf, WHITE, (self.x, self.y), 8)
+        # level pips below + hp bar above (damaged only)
         for i in range(self.level):
-            pygame.draw.circle(surf, GOLD, (self.x - 14 + i * 14, GROUND_Y + 16), 4)
+            pygame.draw.circle(surf, GOLD, (int(self.x + (i - (self.level - 1) / 2) * 14), r.bottom + 11), 4)
         if self.hp < self.max_hp:
             w = 52
             pygame.draw.rect(surf, BLACK, (self.x - w / 2 - 1, r.top - 13, w + 2, 8))
@@ -462,7 +470,7 @@ class Projectile:
             self.dead = True
             return
         tx = self.target.x + self.target.width * 0.7
-        ty = GROUND_Y - self.target.height * 0.55
+        ty = self.target.y
         dx, dy = tx - self.x, ty - self.y
         dist = math.hypot(dx, dy) or 1
         if dist < 22:
@@ -505,40 +513,46 @@ class Particle:
 
 # ---------------------------------------------------------------- drawing helpers
 def draw_background(surf, now):
-    for y in range(0, GROUND_Y, 4):
-        t = y / GROUND_Y
-        c = tuple(int(SKY_TOP[i] + (SKY_BOT[i] - SKY_TOP[i]) * t) for i in range(3))
-        pygame.draw.line(surf, c, (0, y), (WIDTH, y), 4)
-    # sun + clouds
-    pygame.draw.circle(surf, (255, 225, 90), (1130, 82), 34)
-    for cx, cy, s in [(180, 80, 1.0), (520, 55, 0.7), (820, 105, 0.85)]:
-        ox = (now * 6 * s) % (WIDTH + 220) - 110
-        for dx, dy, r in [(0, 0, 26), (24, 4, 20), (-24, 5, 19)]:
-            pygame.draw.circle(surf, WHITE, (int(cx + ox * 0.1 + dx * s), int(cy + dy)), int(r * s))
-    # ocean
-    pygame.draw.rect(surf, OCEAN, (0, GROUND_Y - 46, OCEAN_W + 60, HEIGHT - GROUND_Y + 46))
-    pygame.draw.rect(surf, OCEAN_DEEP, (0, GROUND_Y + 22, OCEAN_W + 60, HEIGHT - GROUND_Y))
-    for i in range(9):
-        wx = (i * 67 + now * 40) % (OCEAN_W + 40)
-        wy = GROUND_Y - 28 + math.sin(now * 2 + i) * 5
+    # top-down map: grass land base everywhere, then ocean / beach on top
+    pygame.draw.rect(surf, (94, 168, 88), (0, 0, WIDTH, HEIGHT))
+    for i in range(70):  # subtle grass patches (deterministic positions)
+        gx = OCEAN_W + 84 + (i * 67) % max(10, CITY_X - OCEAN_W - 130)
+        gy = (i * 97) % HEIGHT
+        pygame.draw.circle(surf, (86, 158, 80), (gx, gy), 9)
+    # ocean: horizontal gradient, deep on the left
+    for x in range(0, OCEAN_W, 4):
+        t = x / OCEAN_W
+        c = tuple(int(OCEAN_DEEP[i] + (OCEAN[i] - OCEAN_DEEP[i]) * t) for i in range(3))
+        pygame.draw.line(surf, c, (x, 0), (x, HEIGHT), 4)
+    for i in range(12):  # drifting foam arcs on the water
+        wx = (i * 53 + now * 30) % OCEAN_W
+        wy = (i * 61) % HEIGHT + math.sin(now * 2 + i) * 4
         pygame.draw.arc(surf, WHITE, (wx, wy, 34, 14), 0.2, 2.6, 2)
-    # sand / ground
-    pygame.draw.rect(surf, SAND, (OCEAN_W - 40, GROUND_Y, WIDTH - OCEAN_W + 40, HEIGHT - GROUND_Y))
-    pygame.draw.rect(surf, (198, 168, 110), (0, GROUND_Y, WIDTH, 5))
+    # beach strip
+    pygame.draw.rect(surf, SAND, (OCEAN_W, 0, 64, HEIGHT))
+    pygame.draw.line(surf, WHITE, (OCEAN_W + 62, 0), (OCEAN_W + 62, HEIGHT), 3)
+    # dashed lane separators
+    for sy in (240, 420, 600):
+        for dx in range(OCEAN_W + 74, CITY_X - 12, 36):
+            pygame.draw.line(surf, (215, 238, 215), (dx, sy), (dx + 20, sy), 2)
 
 
 def draw_city(surf, font, city_hp):
-    buildings = [(1005, 300, 62, 320), (1075, 360, 54, 260), (1137, 275, 70, 345), (1215, 335, 56, 285)]
+    # top-down city: concrete strip with roads and rooftops seen from above
+    pygame.draw.rect(surf, (118, 124, 136), (CITY_X, 0, WIDTH - CITY_X, HEIGHT))
+    pygame.draw.rect(surf, (70, 74, 84), (CITY_X + 122, 0, 12, HEIGHT))  # vertical road
+    pygame.draw.rect(surf, (70, 74, 84), (CITY_X, 318, WIDTH - CITY_X, 12))  # horizontal road
+    buildings = [(18, 76, 86, 100), (150, 66, 92, 88), (20, 192, 84, 102), (148, 182, 94, 108),
+                 (18, 356, 88, 96), (150, 348, 90, 102), (20, 492, 86, 92), (150, 484, 92, 96)]
     flash = city_hp <= 30 and (pygame.time.get_ticks() // 400) % 2 == 0
-    for (x, top, w, h) in buildings:
-        pygame.draw.rect(surf, (105, 115, 135) if not flash else (160, 90, 90), (x, top, w, h))
-        pygame.draw.rect(surf, (70, 80, 100), (x, top, w, h), 2)
-        for wy in range(top + 16, GROUND_Y - 18, 30):
-            for wx in range(x + 9, x + w - 12, 20):
-                lit = ((wx * 7 + wy * 13) % 5) != 0
-                pygame.draw.rect(surf, (255, 230, 130) if lit else (60, 70, 90), (wx, wy, 11, 14))
+    for (bx, by, w, h) in buildings:
+        x, y = CITY_X + bx, by
+        pygame.draw.rect(surf, (168, 96, 96) if flash else (152, 157, 170), (x, y, w, h), border_radius=4)
+        pygame.draw.rect(surf, (84, 90, 104), (x, y, w, h), 2, border_radius=4)
+        pygame.draw.rect(surf, (172, 177, 190) if not flash else (188, 116, 116), (x + 9, y + 9, w - 18, h - 18), border_radius=3)
+        pygame.draw.rect(surf, (110, 116, 130), (x + w // 2 - 9, y + h // 2 - 7, 18, 14))  # rooftop unit
     label = font.render("CITY", True, WHITE)
-    surf.blit(label, (CITY_X + 105 - label.get_width() // 2, 238))
+    surf.blit(label, (CITY_X + (WIDTH - CITY_X) // 2 - label.get_width() // 2, 606))
 
 
 # ---------------------------------------------------------------- updates
@@ -698,13 +712,13 @@ class Game:
                 w.hp -= dmg * 1.35
                 self.shake = min(7, self.shake + dt * 14)
                 if random.random() < 0.35:
-                    self.particles.append(Particle(w.front, GROUND_Y - random.uniform(20, 130), WHITE))
+                    self.particles.append(Particle(w.front, w.y + random.uniform(-52, 52), WHITE))
                 if hitting.hp <= 0:
                     del self.structures[hitting.slot]
                     self.say("A wall was destroyed!")
                     SFX.play("boom")
                     for _ in range(16):
-                        self.particles.append(Particle(hitting.x, GROUND_Y - 70, GREY))
+                        self.particles.append(Particle(hitting.x, hitting.y + random.uniform(-45, 45), GREY))
             if w.hp <= 0 and not w.dead:
                 w.dead = True
                 bounty = int(55 + self.wave_no * 16)
@@ -713,7 +727,7 @@ class Game:
                 self.say(f"Wave destroyed! +${bounty}", 2.2)
                 SFX.play("splash")
                 for _ in range(30):
-                    self.particles.append(Particle(w.x + w.width / 2, GROUND_Y - w.height / 2, (90, 180, 240)))
+                    self.particles.append(Particle(w.x + w.width / 2, w.y + random.uniform(-40, 40), (90, 180, 240)))
             elif w.front >= CITY_X and not w.hit_city:
                 w.hit_city = True
                 w.dead = True
@@ -723,7 +737,7 @@ class Game:
                 self.say(f"The tsunami hit the city! -{dmg_city} HP", 3.5)
                 SFX.play("boom")
                 for _ in range(36):
-                    self.particles.append(Particle(CITY_X + 20, GROUND_Y - random.uniform(0, 200), (90, 180, 240)))
+                    self.particles.append(Particle(CITY_X + 20, w.y + random.uniform(-45, 45), (90, 180, 240)))
                 if self.city_hp <= 0:
                     self.city_hp = 0
                     self.phase = "over"
@@ -734,10 +748,10 @@ class Game:
             s.cooldown -= dt
             if s.kind == "wall" or not self.waves:
                 continue
-            target = min(self.waves, key=lambda w: abs(w.front - s.x))
-            if abs(target.front - s.x) <= s.range and target.x + target.width > 0 and s.cooldown <= 0:
+            target = min(self.waves, key=lambda w: abs(w.front - s.x) + abs(w.y - s.y) * 0.5)
+            if abs(target.front - s.x) <= s.range and abs(target.y - s.y) <= s.range and target.x + target.width > 0 and s.cooldown <= 0:
                 s.cooldown = s.fire_rate
-                self.projectiles.append(Projectile(s.x, GROUND_Y - 46, target, s.damage, s.kind))
+                self.projectiles.append(Projectile(s.x - 24, s.y, target, s.damage, s.kind))
                 SFX.play("frost" if s.kind == "frost" else "shoot", 90)
         for p in list(self.projectiles):
             p.update(dt, now, self.particles)
@@ -759,12 +773,15 @@ class Game:
         oy = random.uniform(-self.shake, self.shake) if self.shake else 0
         surf.save_clip() if False else None
         draw_background(surf, now)
-        # slot pads
-        for i, x in enumerate(SLOT_XS):
-            r = pygame.Rect(x - 30, GROUND_Y - 6, 60, 14)
+        # build plots (top-down grid)
+        for i, (x, y) in enumerate(SLOTS):
+            r = pygame.Rect(x - 34, y - 34, 68, 68)
+            pygame.draw.rect(surf, (228, 214, 170), r, border_radius=8)
             colour = GOLD if i == self.selected else (255, 255, 255)
-            pygame.draw.rect(surf, colour, r, border_radius=5)
-            pygame.draw.rect(surf, GREY, r, 1, border_radius=5)
+            pygame.draw.rect(surf, colour, r, 3 if i == self.selected else 2, border_radius=8)
+            if i not in self.structures:
+                pygame.draw.line(surf, GREY, (x - 10, y), (x + 10, y), 3)
+                pygame.draw.line(surf, GREY, (x, y - 10), (x, y + 10), 3)
         draw_city(surf, fonts["small"], self.city_hp)
         for s in self.structures.values():
             s.draw(surf, self.selected == s.slot, fonts["small"])
@@ -800,15 +817,23 @@ class Game:
         # bottom bar
         pygame.draw.rect(surf, (18, 28, 42), (0, HEIGHT - 74, WIDTH, 74))
         lines = [
-            "Click a slot, then:  [1] Wall $50    [2] Cannon $100    [3] Frost $120    [U] Upgrade $75    [X] Sell    [R] Repair city $75",
-            "SPACE start wave    P pause    M mute all    N music on/off" + ("    *** PAUSED ***" if self.paused else ""),
+            "Click a plot, then:  [1] Wall $50    [2] Cannon $100    [3] Frost $120    [U] Upgrade $75    [X] Sell",
+            "SPACE wave    P pause    M mute    N music" + ("    *** PAUSED ***" if self.paused else ""),
         ]
         for i, line in enumerate(lines):
             surf.blit(small.render(line, True, WHITE), (16, HEIGHT - 66 + i * 26))
         if self.selected is not None:
             s = self.structures.get(self.selected)
-            info = f"Selected slot {self.selected + 1}: " + (f"{s.kind} Lv{s.level} HP {int(s.hp)}/{s.max_hp}" if s else "empty")
-            surf.blit(small.render(info, True, GOLD), (880, HEIGHT - 66))
+            info = f"Plot {self.selected + 1}: " + (f"{s.kind} Lv{s.level} HP {int(s.hp)}/{s.max_hp}" if s else "empty")
+            surf.blit(small.render(info, True, GOLD), (560, HEIGHT - 40))
+        # clickable Repair City button (the R key still works too)
+        can_repair = self.city_hp < self.city_max and self.money >= REPAIR_COST
+        pygame.draw.rect(surf, GREEN if can_repair else (52, 92, 62), REPAIR_BUTTON, border_radius=8)
+        pygame.draw.rect(surf, WHITE, REPAIR_BUTTON, 2, border_radius=8)
+        rt = mid.render("REPAIR CITY", True, WHITE)
+        surf.blit(rt, (REPAIR_BUTTON.centerx - rt.get_width() // 2, REPAIR_BUTTON.top + 6))
+        rt2 = small.render(f"${REPAIR_COST}  +{REPAIR_AMOUNT} HP  [R]", True, WHITE)
+        surf.blit(rt2, (REPAIR_BUTTON.centerx - rt2.get_width() // 2, REPAIR_BUTTON.top + 32))
         if self.msg_timer > 0 and self.message:
             t = big.render(self.message, True, WHITE)
             bg = pygame.Rect(WIDTH // 2 - t.get_width() // 2 - 14, 66, t.get_width() + 28, 46)
@@ -837,8 +862,8 @@ class Game:
 
 def slot_at(pos):
     mx, my = pos
-    for i, x in enumerate(SLOT_XS):
-        if abs(mx - x) <= 42 and GROUND_Y - 165 <= my <= GROUND_Y + 26:
+    for i, (x, y) in enumerate(SLOTS):
+        if abs(mx - x) <= 38 and abs(my - y) <= 38:
             return i
     return None
 
@@ -891,10 +916,14 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                slot = slot_at(event.pos)
-                if slot is not None:
-                    game.selected = slot
+                if REPAIR_BUTTON.collidepoint(event.pos):
+                    game.repair()
                     SFX.play("click", 50)
+                else:
+                    slot = slot_at(event.pos)
+                    if slot is not None:
+                        game.selected = slot
+                        SFX.play("click", 50)
             elif event.type == pygame.KEYDOWN:
                 if game.phase == "over" and event.key in (pygame.K_RETURN, pygame.K_r):
                     game = Game()
