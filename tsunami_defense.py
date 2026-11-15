@@ -5,7 +5,7 @@ How to play:
   * TOP-DOWN view: waves roll in from the ocean (left) down one of 3 lanes
     toward the city (right). Walls block only their own lane; towers shoot
     across lanes.
-  * Between waves is BUILD phase. Click one of the 12 build plots to select it,
+  * Between waves is BUILD phase. Click a build plot to select it (12 free + 6 locked you can buy with B),
     then build a defense (buttons at the bottom, or keys 1 / 2 / 3 / 4):
         1 = Wall        $50   - blocks the wave, soaks up damage
         2 = Cannon      $100  - shoots the wave, reduces its power
@@ -46,7 +46,10 @@ FPS = 60
 # top-down map: ocean (left) -> beach -> 3 lanes of land -> city (right)
 LANE_YS = [150, 330, 510]
 SLOT_COLS_X = [575, 695, 815, 925]
-SLOTS = [(x, y) for y in LANE_YS for x in SLOT_COLS_X]  # 12 build plots
+BASE_SLOTS = [(x, y) for y in LANE_YS for x in SLOT_COLS_X]  # 12 free build plots
+EXTRA_SLOTS = [(510, y) for y in LANE_YS] + [(985, y) for y in LANE_YS]  # 6 buyable: front beach column + last-stand column by the city
+SLOTS = BASE_SLOTS + EXTRA_SLOTS  # indices 12-17 start LOCKED, bought with B / BUY PLOT button
+BUY_PLOT_BUTTON = pygame.Rect(640, HEIGHT - 68, 200, 56)
 REPAIR_BUTTON = pygame.Rect(1064, HEIGHT - 68, 200, 56)
 STRUCT_REPAIR_BUTTON = pygame.Rect(852, HEIGHT - 68, 200, 56)
 PLAY_BUTTON = pygame.Rect(490, 292, 300, 58)
@@ -62,10 +65,13 @@ REPAIR_COST = 75
 REPAIR_AMOUNT = 20
 SELL_REFUND = 0.7
 STRUCT_REPAIR_PER_HP = 0.35  # $ per missing HP to fully repair a tower/wall (min $10)
+PLOT_BASE_COST = 500  # first extra plot - quite some money on purpose
+PLOT_COST_STEP = 250  # each further plot costs this much more: 500, 750, 1000, 1250, 1500, 1750
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 CHANGELOG = [
+    ("1.6.0", ["Buyable extra plots: 6 locked plots (beach column + last-stand column by the city)", "Click a locked plot and press B or click BUY PLOT - $500, then +$250 per plot", "18 build plots in total once you have bought them all"]),
     ("1.5.0", ["MEGA-TSUNAMI boss every 5 waves - it spans all 3 lanes", "Survive Wave 20 to WIN, then Endless mode if you want more", "New Mortar tower ($150): slow shells, splash damage across lanes", "New wave types: fast SURGE waves and rare GOLDEN waves (3x bounty)", "Storm weather rolls in from Wave 10: dark skies and rain", "Lifetime stats on the menu (best wave, total destroyed, victories) - saved", "Floating damage numbers on every hit"]),
     ("1.4.1", ["The game now downloads missing music BY ITSELF at startup", "Existing players get the real tracks with this update - no new zip needed", "Works with any launcher version, even the original one"]),
     ("1.4.0", ["Real music: CC0 orchestral tracks by Dizzy Crow - calm + fight loops", "Synthesized music stays as a fallback if the music folder is missing", "See MUSIC_LICENSES.md for sources - the tracks are public domain (CC0)"]),
@@ -831,6 +837,7 @@ class Game:
         self.boss_round = False
         self.stats_committed = False
         self.win_recorded = False
+        self.unlocked_plots = set(range(len(BASE_SLOTS)))  # extra plots (indices 12-17) are bought during the game
         self.update_available = None  # synced from UPDATE_STATE in draw_hud
 
     # ----- economy / actions
@@ -844,6 +851,10 @@ class Game:
         if self.selected in self.structures:
             self.say("That slot is occupied - select it and press X to sell first.")
             return
+        if self.selected not in self.unlocked_plots:
+            self.say(f"That plot is locked - press B or click BUY PLOT (${self.plot_cost()}) to buy it.")
+            SFX.play("error", 150)
+            return
         cost = COSTS[kind]
         if self.money < cost:
             self.say(f"Not enough money for a {kind} (${cost}).")
@@ -852,6 +863,27 @@ class Game:
         self.money -= cost
         self.structures[self.selected] = Structure(kind, self.selected)
         self.say(f"Built a {kind}! (${cost})")
+        SFX.play("build")
+
+    def plot_cost(self):
+        bought = len(self.unlocked_plots) - len(BASE_SLOTS)
+        return PLOT_BASE_COST + PLOT_COST_STEP * bought
+
+    def buy_selected_plot(self):
+        if self.selected is None:
+            self.say("Click a locked (dark) plot first!")
+            return
+        if self.selected in self.unlocked_plots:
+            self.say("That plot is already yours.")
+            return
+        cost = self.plot_cost()
+        if self.money < cost:
+            self.say(f"Buying a plot costs ${cost} - save up!")
+            SFX.play("error", 150)
+            return
+        self.money -= cost
+        self.unlocked_plots.add(self.selected)
+        self.say(f"Plot {self.selected + 1} bought for ${cost}! Build on it now.")
         SFX.play("build")
 
     def sell_selected(self):
@@ -1057,10 +1089,14 @@ class Game:
         # build plots (top-down grid)
         for i, (x, y) in enumerate(SLOTS):
             r = pygame.Rect(x - 34, y - 34, 68, 68)
-            pygame.draw.rect(surf, (228, 214, 170), r, border_radius=8)
+            locked = i not in self.unlocked_plots
+            pygame.draw.rect(surf, (105, 100, 88) if locked else (228, 214, 170), r, border_radius=8)
             colour = GOLD if i == self.selected else (255, 255, 255)
             pygame.draw.rect(surf, colour, r, 3 if i == self.selected else 2, border_radius=8)
-            if i not in self.structures:
+            if locked:
+                t = fonts["small"].render(f"${self.plot_cost()}", True, GOLD)
+                surf.blit(t, (x - t.get_width() // 2, y - 11))
+            elif i not in self.structures:
                 pygame.draw.line(surf, GREY, (x - 10, y), (x + 10, y), 3)
                 pygame.draw.line(surf, GREY, (x, y - 10), (x, y + 10), 3)
         draw_city(surf, fonts["small"], self.city_hp)
@@ -1101,11 +1137,11 @@ class Game:
         pygame.draw.rect(surf, (18, 28, 42), (0, HEIGHT - 74, WIDTH, 74))
         lines = [
             "Click a plot:  [1] Wall $50  [2] Cannon $100  [3] Frost $120  [4] Mortar $150  [U] Upgrade $75  [X] Sell",
-            "SPACE wave    T repair defense    P pause    M mute    N music" + ("    *** PAUSED ***" if self.paused else ""),
+            "SPACE wave    B buy plot    T repair defense    P pause    M mute    N music" + ("    *** PAUSED ***" if self.paused else ""),
         ]
         for i, line in enumerate(lines):
             surf.blit(small.render(line, True, WHITE), (16, HEIGHT - 66 + i * 26))
-        if self.selected is not None:
+        if self.selected is not None and self.selected in self.unlocked_plots:
             s = self.structures.get(self.selected)
             info = f"Plot {self.selected + 1}: " + (f"{s.kind} Lv{s.level} HP {int(s.hp)}/{s.max_hp}" if s else "empty")
             surf.blit(small.render(info, True, GOLD), (560, HEIGHT - 40))
@@ -1128,6 +1164,15 @@ class Game:
         s_label = f"${s_cost} FULL  [T]" if sel and s_cost > 0 else "FULL HP  [T]" if sel else "SELECT ONE  [T]"
         st2 = small.render(s_label, True, WHITE)
         surf.blit(st2, (STRUCT_REPAIR_BUTTON.centerx - st2.get_width() // 2, STRUCT_REPAIR_BUTTON.top + 32))
+        # clickable Buy Plot button - only shown while a LOCKED plot is selected
+        if self.selected is not None and self.selected not in self.unlocked_plots:
+            cost = self.plot_cost()
+            pygame.draw.rect(surf, GREEN if self.money >= cost else (52, 92, 62), BUY_PLOT_BUTTON, border_radius=8)
+            pygame.draw.rect(surf, WHITE, BUY_PLOT_BUTTON, 2, border_radius=8)
+            bt = mid.render(f"BUY PLOT {self.selected + 1}", True, WHITE)
+            surf.blit(bt, (BUY_PLOT_BUTTON.centerx - bt.get_width() // 2, BUY_PLOT_BUTTON.top + 6))
+            bt2 = small.render(f"${cost}  [B]", True, WHITE)
+            surf.blit(bt2, (BUY_PLOT_BUTTON.centerx - bt2.get_width() // 2, BUY_PLOT_BUTTON.top + 32))
         if self.msg_timer > 0 and self.message:
             t = big.render(self.message, True, WHITE)
             bg = pygame.Rect(WIDTH // 2 - t.get_width() // 2 - 14, 66, t.get_width() + 28, 46)
@@ -1277,6 +1322,16 @@ def main():
                 assert Wave(5, 1.0, "boss").max_hp > Wave(5, 1.0).max_hp * 3
                 assert Wave(3, 1.0, "surge").speed > Wave(3, 1.0).speed
                 assert Wave(3, 1.0, "golden").bounty_mult == 3.0
+            if frames == 9:
+                # extra plots: a locked plot refuses builds, buying unlocks it
+                game.selected = 12
+                game.build("wall")
+                assert 12 not in game.structures, "built on a locked plot!"
+                game.money += 2000
+                game.buy_selected_plot()
+                assert 12 in game.unlocked_plots, "buy_selected_plot failed"
+                game.build("wall")
+                assert game.structures[12].kind == "wall"
             if frames == 10:
                 game.start_wave()
             if frames > 300:
@@ -1302,6 +1357,9 @@ def main():
                         running = False
                 elif game.phase == "changelog":
                     game.phase = "menu"
+                    SFX.play("click", 50)
+                elif BUY_PLOT_BUTTON.collidepoint(event.pos) and game.selected is not None and game.selected not in game.unlocked_plots:
+                    game.buy_selected_plot()
                     SFX.play("click", 50)
                 elif STRUCT_REPAIR_BUTTON.collidepoint(event.pos):
                     game.repair_selected()
@@ -1361,6 +1419,8 @@ def main():
                     game.repair()
                 elif event.key == pygame.K_t:
                     game.repair_selected()
+                elif event.key == pygame.K_b:
+                    game.buy_selected_plot()
                 elif event.key == pygame.K_p:
                     game.paused = not game.paused
                 elif event.key == pygame.K_m:

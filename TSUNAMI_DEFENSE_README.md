@@ -19,6 +19,7 @@ python tsunami_defense.py
   - `3` — Frost Tower — $120 — damages and slows the wave
 - Click a built defense to select it: `U` upgrade ($75, max **Level 10**), `X` sell (70% refund)
 - `4` — Mortar — $150 — slow shells with splash damage that also hits waves in neighbouring lanes
+- **Extra plots:** 6 dark locked plots (a beach column + a last-stand column by the city) can be bought — click one and press `B` or click **BUY PLOT**. Prices start at $500 and rise $250 per plot, up to 18 plots total.
 - Every 5th wave is a **MEGA-TSUNAMI** spanning all 3 lanes. Survive **Wave 20 to win**, then keep going in Endless mode. Thin, fast **surge** waves are weak but quick, and rare **golden** waves are worth 3x bounty. From Wave 10 a storm rolls in. Your best wave / total kills / victories are saved in `stats.json` and shown on the menu.
 - Upgrades raise damage + HP for both towers. **Cannon** also gains +30 range and faster fire per level (0.55s -> 0.25s per shot). **Frost** also gains +30 range per level, but its fire rate does *not* speed up - it stays 0.85s (its slow effect is its strength). Walls just gain a lot of HP.
 - `R` — Repair city ($75, +20 HP) — or click the green **REPAIR CITY** button in the bottom-right

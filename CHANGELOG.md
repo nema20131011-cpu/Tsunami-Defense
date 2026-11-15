@@ -2,6 +2,9 @@
 
 All notable changes, newest first. The same list is shown in-game under **Changelog** on the main menu.
 
+## v1.6.0
+- **Buyable extra plots:** 6 additional locked plots - a front beach column (earliest contact with waves) and a last-stand column right next to the city. Click a dark locked plot and press `B` or click the **BUY PLOT** button. They are deliberately expensive: $500 for the first, rising $250 each ($500 / $750 / $1000 / $1250 / $1500 / $1750 - $6,750 for all six), taking you from 12 to 18 build plots.
+
 ## v1.5.0
 - **Boss waves:** every 5th wave is a single MEGA-TSUNAMI spanning all 3 lanes at once (6.5x HP, slow, 6x bounty, but a leak costs 50 city HP). Walls in any lane block it.
 - **Win condition:** survive Wave 20 to win the campaign (victory screen), then optionally continue in Endless mode.
