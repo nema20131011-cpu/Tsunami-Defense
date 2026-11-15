@@ -2,6 +2,15 @@
 
 All notable changes, newest first. The same list is shown in-game under **Changelog** on the main menu.
 
+## v1.5.0
+- **Boss waves:** every 5th wave is a single MEGA-TSUNAMI spanning all 3 lanes at once (6.5x HP, slow, 6x bounty, but a leak costs 50 city HP). Walls in any lane block it.
+- **Win condition:** survive Wave 20 to win the campaign (victory screen), then optionally continue in Endless mode.
+- **New tower - Mortar ($150, key `4`):** slow-firing shells (38 base damage) with 190px splash at half damage, which reaches waves in neighbouring lanes. Upgrades add damage, range, and a little fire rate.
+- **New wave types:** SURGE waves (from Wave 2, 22% chance: 45% HP but 1.7x speed, thinner) and GOLDEN waves (from Wave 3, 10% chance: gold-coloured, 3x bounty).
+- **Weather:** from Wave 10 the map darkens and rain falls, reaching full storm by Wave 13.
+- **Stats that save:** best wave, total tsunamis destroyed, victories, and games played are stored in `stats.json` and shown on the main menu.
+- **Damage numbers:** every projectile hit pops a floating damage number (gold = cannon, ice blue = frost, orange = mortar/splash).
+
 ## v1.4.1
 - The game now downloads missing music files **by itself** at startup (`ensure_assets()` - URLs derived from `update_config.json`, with the repo as fallback). Since the game file is the one thing every launcher version auto-updates, existing players receive the real music automatically with this update - **no new zip needs to be sent to anyone, for this or future asset updates.** The launcher also supports this via `extra_files` for brand-new installs.
 

@@ -6,10 +6,13 @@ How to play:
     toward the city (right). Walls block only their own lane; towers shoot
     across lanes.
   * Between waves is BUILD phase. Click one of the 12 build plots to select it,
-    then build a defense (buttons at the bottom, or keys 1 / 2 / 3):
+    then build a defense (buttons at the bottom, or keys 1 / 2 / 3 / 4):
         1 = Wall        $50   - blocks the wave, soaks up damage
         2 = Cannon      $100  - shoots the wave, reduces its power
         3 = Frost Tower $120  - shoots the wave AND slows it down
+        4 = Mortar      $150  - slow shells with SPLASH damage across lanes
+  * Every 5th wave is a MEGA-TSUNAMI spanning all 3 lanes. Survive Wave 20
+    to WIN, then keep going in Endless mode if you want.
   * Click a built defense to select it, then:
         U = Upgrade ($75, +damage/HP)    X = Sell (70% refund)
   * SPACE = start the next wave     P = pause     R = repair city ($75, +20 HP)
@@ -51,17 +54,19 @@ CHANGELOG_BUTTON = pygame.Rect(490, 366, 300, 58)
 QUIT_BUTTON = pygame.Rect(490, 440, 300, 58)
 BACK_BUTTON = pygame.Rect(490, 610, 300, 50)
 
-COSTS = {"wall": 50, "cannon": 100, "frost": 120}
+COSTS = {"wall": 50, "cannon": 100, "frost": 120, "mortar": 150}
 UPGRADE_COST = 75
 MAX_LEVEL = 10
+WIN_WAVE = 20
 REPAIR_COST = 75
 REPAIR_AMOUNT = 20
 SELL_REFUND = 0.7
 STRUCT_REPAIR_PER_HP = 0.35  # $ per missing HP to fully repair a tower/wall (min $10)
 
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 
 CHANGELOG = [
+    ("1.5.0", ["MEGA-TSUNAMI boss every 5 waves - it spans all 3 lanes", "Survive Wave 20 to WIN, then Endless mode if you want more", "New Mortar tower ($150): slow shells, splash damage across lanes", "New wave types: fast SURGE waves and rare GOLDEN waves (3x bounty)", "Storm weather rolls in from Wave 10: dark skies and rain", "Lifetime stats on the menu (best wave, total destroyed, victories) - saved", "Floating damage numbers on every hit"]),
     ("1.4.1", ["The game now downloads missing music BY ITSELF at startup", "Existing players get the real tracks with this update - no new zip needed", "Works with any launcher version, even the original one"]),
     ("1.4.0", ["Real music: CC0 orchestral tracks by Dizzy Crow - calm + fight loops", "Synthesized music stays as a fallback if the music folder is missing", "See MUSIC_LICENSES.md for sources - the tracks are public domain (CC0)"]),
     ("1.3.0", ["Main menu with Play / Changelog / Quit", "Repair towers and walls too: select one, press T or click REPAIR DEFENSE", "Structure repair is a full repair; cost scales with the damage"]),
@@ -70,6 +75,7 @@ CHANGELOG = [
     ("1.0.0", ["First release: waves, Wall / Cannon / Frost, upgrades, selling", "Synthesized sound effects + music, and the auto-update launcher"]),
 ]
 UPDATE_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "update_config.json")
+STATS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stats.json")
 
 # colours
 SKY_TOP = (70, 150, 210)
@@ -344,16 +350,38 @@ MUSIC = MusicPlayer()
 class Wave:
     """One tsunami. Bigger (taller / tougher / faster) every round."""
 
-    def __init__(self, number, scale=1.0):
+    def __init__(self, number, scale=1.0, kind="normal"):
+        # kind: normal | surge (fast, weak) | golden (big bounty) | boss (mega)
         self.number = number
+        self.kind = kind
         self.lane = random.choice(LANE_YS)
         self.y = self.lane
         self.thickness = min(150, (104 + number * 4) * scale)
-        self.height = self.thickness
         self.width = 150 + number * 6
         self.max_hp = (100 * (1.28 ** (number - 1))) * scale  # rebalanced: was 1.55x/wave (impossible by ~wave 10), now 1.28x
-        self.hp = self.max_hp
         self.speed = min(105, (46 + number * 3.5) * (0.95 + 0.05 * scale))  # rebalanced: slower growth + lower cap = towers get more firing time
+        self.bounty_mult = 1.0
+        if kind == "surge":
+            self.max_hp *= 0.45
+            self.speed = min(175, self.speed * 1.7)
+            self.thickness *= 0.55
+            self.bounty_mult = 0.8
+        elif kind == "golden":
+            self.max_hp *= 1.25
+            self.thickness *= 1.05
+            self.bounty_mult = 3.0
+        elif kind == "boss":
+            # MEGA-TSUNAMI: centred on the middle lane, thick enough to cover
+            # all 3 lanes at once, slow but with a huge HP pool
+            self.y = LANE_YS[1]
+            self.lane = self.y
+            self.thickness = 470
+            self.width += 60
+            self.max_hp *= 6.5
+            self.speed *= 0.55
+            self.bounty_mult = 6.0
+        self.height = self.thickness
+        self.hp = self.max_hp
         self.x = -self.width - 30
         self.slow_until = 0
         self.bob_phase = random.uniform(0, math.tau)
@@ -372,7 +400,7 @@ class Wave:
         speed = self.speed * (0.55 if self.is_slowed(now) else 1.0)
         hitting = None
         for b in blockers:
-            if b.kind == "wall" and b.hp > 0 and abs(b.y - self.y) < 78:
+            if b.kind == "wall" and b.hp > 0 and (abs(b.y - self.y) < 78 or self.kind == "boss"):
                 if self.front >= b.x - 4 and self.x < b.x:
                     hitting = b
                     break
@@ -385,7 +413,8 @@ class Wave:
         # The band shrinks as the wave loses HP.
         thick = self.thickness * max(0.25, self.hp / self.max_hp) if self.max_hp else self.thickness
         top = self.y - thick / 2
-        colour = (35, 130, 205) if not self.is_slowed(now) else (70, 165, 220)
+        base_colour = {"boss": (86, 66, 185), "golden": (205, 165, 45), "surge": (70, 175, 225)}.get(self.kind, (35, 130, 205))
+        colour = tuple(min(255, c + 45) for c in base_colour) if self.is_slowed(now) else base_colour
         body = pygame.Rect(int(self.x), int(top), int(self.width), int(thick))
         pygame.draw.rect(surf, colour, body, border_radius=10)
         pygame.draw.rect(surf, (90, 190, 240), body, 3, border_radius=10)
@@ -401,7 +430,7 @@ class Wave:
             pygame.draw.circle(surf, WHITE, (int(self.front - 4), int(fy)), max(4, int(r)))
         # HP bar above the band
         if self.hp < self.max_hp:
-            w = 110
+            w = 200 if self.kind == "boss" else 110
             bx, by = self.x + self.width / 2 - w / 2, max(60, top - 24)
             pygame.draw.rect(surf, BLACK, (bx - 1, by - 1, w + 2, 10))
             pygame.draw.rect(surf, RED, (bx, by, w, 8))
@@ -419,19 +448,21 @@ class Structure:
             self.max_hp = 220
         elif kind == "cannon":
             self.max_hp = 90
+        elif kind == "mortar":
+            self.max_hp = 85
         else:  # frost
             self.max_hp = 80
         self.hp = self.max_hp
 
     @property
     def damage(self):
-        base = {"cannon": 26, "frost": 13}.get(self.kind, 0)
+        base = {"cannon": 26, "frost": 13, "mortar": 38}.get(self.kind, 0)
         return base * (1 + 0.6 * (self.level - 1))
 
     @property
     def range(self):
-        # +30 range per upgrade level for BOTH towers: Lv1 520 -> Lv10 790
-        return 520 + 30 * (self.level - 1) if self.kind in ("cannon", "frost") else 0
+        # +30 range per upgrade level for ALL towers: Lv1 520 -> Lv10 790
+        return 520 + 30 * (self.level - 1) if self.kind in ("cannon", "frost", "mortar") else 0
 
     @property
     def fire_rate(self):
@@ -440,6 +471,8 @@ class Structure:
         # sped up by upgrades (stays 0.85s) - it gains range + damage only.
         if self.kind == "cannon":
             return max(0.25, 0.55 - 0.033 * (self.level - 1))
+        if self.kind == "mortar":
+            return max(0.95, 1.55 - 0.06 * (self.level - 1))
         return 0.85
 
     def upgrade(self):
@@ -477,6 +510,12 @@ class Structure:
             pygame.draw.circle(surf, (45, 55, 70), (self.x, self.y), 19)
             pygame.draw.rect(surf, BLACK, (self.x - 50, self.y - 5, 32, 10), border_radius=4)  # barrel points at the ocean
             pygame.draw.circle(surf, GOLD, (self.x, self.y), 6)
+        elif self.kind == "mortar":
+            pygame.draw.rect(surf, (105, 110, 74), r, border_radius=6)
+            pygame.draw.rect(surf, (140, 146, 104), r, 2, border_radius=6)
+            pygame.draw.circle(surf, (70, 74, 50), (self.x, self.y), 18)
+            pygame.draw.rect(surf, BLACK, (self.x - 54, self.y - 9, 36, 18), border_radius=5)  # fat barrel pointing at the ocean
+            pygame.draw.circle(surf, (255, 150, 60), (self.x, self.y), 6)
         else:  # frost
             pygame.draw.rect(surf, (90, 160, 200), r, border_radius=6)
             pygame.draw.rect(surf, (170, 225, 250), r, 2, border_radius=6)
@@ -497,10 +536,11 @@ class Projectile:
         self.target = target
         self.damage = damage
         self.kind = kind
-        self.speed = 620
+        self.speed = 400 if kind == "mortar" else 620
+        self.splash = 190 if kind == "mortar" else 0  # mortar shells splash into neighbouring lanes
         self.dead = False
 
-    def update(self, dt, now, particles):
+    def update(self, dt, now, particles, floaters=None, waves=None):
         if self.target.dead:
             self.dead = True
             return
@@ -510,11 +550,27 @@ class Projectile:
         dist = math.hypot(dx, dy) or 1
         if dist < 22:
             self.target.hp -= self.damage
-            SFX.play("hit", 80)
+            SFX.play("boom" if self.kind == "mortar" else "hit", 200 if self.kind == "mortar" else 80)
+            hit_colour = ICE if self.kind == "frost" else (255, 140, 60) if self.kind == "mortar" else GOLD
+            if floaters is not None:
+                floaters.append(FloatText(tx, ty - 26, f"-{int(self.damage)}", hit_colour))
             if self.kind == "frost":
                 self.target.slow_until = now + 1.6
-            for _ in range(7):
-                particles.append(Particle(tx, ty, ICE if self.kind == "frost" else GOLD))
+            if self.splash and waves:
+                # splash: every OTHER wave within the radius takes half damage
+                for w in list(waves):
+                    if w is self.target or w.dead:
+                        continue
+                    cx = min(max(tx, w.x), w.front)
+                    if math.hypot(tx - cx, ty - w.y) <= self.splash:
+                        splash_dmg = self.damage * 0.5
+                        w.hp -= splash_dmg
+                        if floaters is not None:
+                            floaters.append(FloatText(cx, w.y - 26, f"-{int(splash_dmg)}", hit_colour))
+                        for _ in range(5):
+                            particles.append(Particle(cx, w.y, hit_colour))
+            for _ in range(16 if self.kind == "mortar" else 7):
+                particles.append(Particle(tx, ty, hit_colour))
             self.dead = True
             return
         self.x += dx / dist * self.speed * dt
@@ -546,8 +602,27 @@ class Particle:
             pygame.draw.circle(surf, self.colour, (int(self.x), int(self.y)), self.size)
 
 
+class FloatText:
+    """A floating damage number that rises and fades."""
+
+    def __init__(self, x, y, text, colour):
+        self.x, self.y = float(x), float(y)
+        self.text = text
+        self.colour = colour
+        self.life = 0.9
+
+    def update(self, dt):
+        self.life -= dt
+        self.y -= 42 * dt
+
+    def draw(self, surf, font):
+        if self.life > 0:
+            t = font.render(self.text, True, self.colour)
+            surf.blit(t, (self.x - t.get_width() / 2, self.y))
+
+
 # ---------------------------------------------------------------- drawing helpers
-def draw_background(surf, now):
+def draw_background(surf, now, storm=0.0):
     # top-down map: grass land base everywhere, then ocean / beach on top
     pygame.draw.rect(surf, (94, 168, 88), (0, 0, WIDTH, HEIGHT))
     for i in range(70):  # subtle grass patches (deterministic positions)
@@ -570,6 +645,15 @@ def draw_background(surf, now):
     for sy in (240, 420, 600):
         for dx in range(OCEAN_W + 74, CITY_X - 12, 36):
             pygame.draw.line(surf, (215, 238, 215), (dx, sy), (dx + 20, sy), 2)
+    # storm weather (Wave 10+): the sky darkens and rain streaks fall
+    if storm > 0:
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((18, 26, 52, int(88 * storm)))
+        surf.blit(overlay, (0, 0))
+        for i in range(int(110 * storm)):
+            rx = (i * 89 + now * 360) % WIDTH
+            ry = (i * 67 + now * 640) % HEIGHT
+            pygame.draw.line(surf, (190, 215, 240), (rx, ry), (rx - 5, ry + 14), 2)
 
 
 def draw_city(surf, font, city_hp):
@@ -630,6 +714,39 @@ def _update_checker_loop():
         except Exception:
             pass
         time.sleep(60)
+
+
+# ---------------------------------------------------------------- stats
+# Persistent lifetime stats, saved to stats.json next to the game.
+# Shown on the main menu. Saving is a no-op in the headless smoke test.
+def _load_stats():
+    stats = {"best_wave": 0, "total_kills": 0, "victories": 0, "games_played": 0}
+    try:
+        with open(STATS_PATH, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        for key in stats:
+            stats[key] = int(saved.get(key, 0))
+    except Exception:
+        pass
+    return stats
+
+
+STATS = _load_stats()
+
+
+def save_stats():
+    if os.environ.get("TSUNAMI_TEST") == "1":
+        return
+    try:
+        with open(STATS_PATH, "w", encoding="utf-8") as f:
+            json.dump(STATS, f)
+    except Exception:
+        pass
+
+
+def _record_game_start():
+    STATS["games_played"] = STATS.get("games_played", 0) + 1
+    save_stats()
 
 
 # ---------------------------------------------------------------- assets
@@ -709,6 +826,11 @@ class Game:
         self.shake = 0.0
         self.paused = False
         self.kills = 0
+        self.floaters = []
+        self.endless = False
+        self.boss_round = False
+        self.stats_committed = False
+        self.win_recorded = False
         self.update_available = None  # synced from UPDATE_STATE in draw_hud
 
     # ----- economy / actions
@@ -796,16 +918,24 @@ class Game:
             return
         self.wave_no += 1
         self.phase = "wave"
-        # round composition: 1 big wave, plus extra waves every other round
-        self.to_spawn = min(4, 1 + (self.wave_no - 1) // 2)  # rebalanced: capped at 4 per round (was unlimited growth)
+        # every 5th round is a boss round: one MEGA-TSUNAMI spanning all lanes
+        self.boss_round = (self.wave_no % 5 == 0)
+        if self.boss_round:
+            self.to_spawn = 1
+        else:
+            # round composition: 1 big wave, plus extra waves every other round
+            self.to_spawn = min(4, 1 + (self.wave_no - 1) // 2)  # rebalanced: capped at 4 per round (was unlimited growth)
         self.spawn_timer = 0.0
         self.spawn_scale = 1.0
-        self.say(f"Wave {self.wave_no} incoming! {self.to_spawn} tsunami(s)!", 3.5)
+        if self.boss_round:
+            self.say(f"MEGA-TSUNAMI! Wave {self.wave_no} spans ALL 3 lanes!", 4.5)
+        else:
+            self.say(f"Wave {self.wave_no} incoming! {self.to_spawn} tsunami(s)!", 3.5)
         SFX.play("alarm")
 
     # ----- update
     def update(self, dt, now):
-        if self.paused or self.phase in ("over", "menu", "changelog"):
+        if self.paused or self.phase in ("over", "win", "menu", "changelog"):
             return
         self.msg_timer = max(0, self.msg_timer - dt)
         self.shake = max(0, self.shake - dt * 22)
@@ -814,7 +944,15 @@ class Game:
             self.spawn_timer -= dt
             if self.spawn_timer <= 0:
                 scale = self.spawn_scale
-                self.waves.append(Wave(self.wave_no, scale))
+                if self.boss_round:
+                    kind = "boss"
+                elif self.wave_no >= 3 and random.random() < 0.10:
+                    kind = "golden"  # rare, worth 3x bounty
+                elif self.wave_no >= 2 and random.random() < 0.22:
+                    kind = "surge"  # fast and thin, low HP
+                else:
+                    kind = "normal"
+                self.waves.append(Wave(self.wave_no, scale, kind))
                 self.spawn_scale *= 0.82  # followers in same round are a bit smaller
                 self.to_spawn -= 1
                 self.spawn_timer = 3.2
@@ -839,17 +977,18 @@ class Game:
                         self.particles.append(Particle(hitting.x, hitting.y + random.uniform(-45, 45), GREY))
             if w.hp <= 0 and not w.dead:
                 w.dead = True
-                bounty = int(65 + self.wave_no * 20)  # rebalanced: slightly richer kills
+                bounty = int((65 + self.wave_no * 20) * getattr(w, "bounty_mult", 1.0))  # golden 3x, boss 6x, surge 0.8x
                 self.money += bounty
                 self.kills += 1
-                self.say(f"Wave destroyed! +${bounty}", 2.2)
+                label = "MEGA-TSUNAMI" if w.kind == "boss" else "Golden wave" if w.kind == "golden" else "Wave"
+                self.say(f"{label} destroyed! +${bounty}", 2.2)
                 SFX.play("splash")
                 for _ in range(30):
                     self.particles.append(Particle(w.x + w.width / 2, w.y + random.uniform(-40, 40), (90, 180, 240)))
             elif w.front >= CITY_X and not w.hit_city:
                 w.hit_city = True
                 w.dead = True
-                dmg_city = int(min(28, 7 + self.wave_no * 1.6 + 14 * max(0, w.hp / w.max_hp)))  # rebalanced: a leak hurts less (was up to 38)
+                dmg_city = 50 if w.kind == "boss" else int(min(28, 7 + self.wave_no * 1.6 + 14 * max(0, w.hp / w.max_hp)))  # boss leak = disaster; normal leak rebalanced (was up to 38)
                 self.city_hp -= dmg_city
                 self.shake = 13
                 self.say(f"The tsunami hit the city! -{dmg_city} HP", 3.5)
@@ -859,6 +998,11 @@ class Game:
                 if self.city_hp <= 0:
                     self.city_hp = 0
                     self.phase = "over"
+                    if not self.stats_committed:
+                        STATS["total_kills"] = STATS.get("total_kills", 0) + self.kills
+                        STATS["best_wave"] = max(STATS.get("best_wave", 0), self.wave_no)
+                        self.stats_committed = True
+                        save_stats()
                     SFX.play("gameover")
         self.waves = [w for w in self.waves if not w.dead]
         # towers fire
@@ -872,25 +1016,44 @@ class Game:
                 self.projectiles.append(Projectile(s.x - 24, s.y, target, s.damage, s.kind))
                 SFX.play("frost" if s.kind == "frost" else "shoot", 90)
         for p in list(self.projectiles):
-            p.update(dt, now, self.particles)
+            p.update(dt, now, self.particles, self.floaters, self.waves)
         self.projectiles = [p for p in self.projectiles if not p.dead]
         for p in self.particles:
             p.update(dt)
         self.particles = [p for p in self.particles if p.life > 0]
+        for f in self.floaters:
+            f.update(dt)
+        self.floaters = [f for f in self.floaters if f.life > 0]
         # round cleared?
         if self.phase == "wave" and self.to_spawn == 0 and not self.waves and self.city_hp > 0:
             bonus = 50 + self.wave_no * 14  # rebalanced: bigger round-clear bonus
             self.money += bonus
-            self.phase = "build"
-            self.say(f"Wave {self.wave_no} cleared! Bonus +${bonus}. Build, then SPACE for Wave {self.wave_no + 1}.", 5)
-            SFX.play("clear")
+            STATS["best_wave"] = max(STATS.get("best_wave", 0), self.wave_no)
+            save_stats()
+            if self.wave_no >= WIN_WAVE and not self.endless:
+                # campaign won! (endless mode is offered on the win screen)
+                self.phase = "win"
+                if not self.win_recorded:
+                    STATS["victories"] = STATS.get("victories", 0) + 1
+                    self.win_recorded = True
+                if not self.stats_committed:
+                    STATS["total_kills"] = STATS.get("total_kills", 0) + self.kills
+                    self.stats_committed = True
+                save_stats()
+                SFX.play("clear")
+            else:
+                self.phase = "build"
+                self.say(f"Wave {self.wave_no} cleared! Bonus +${bonus}. Build, then SPACE for Wave {self.wave_no + 1}.", 5)
+                SFX.play("clear")
 
     # ----- drawing
     def draw(self, surf, fonts, now):
         ox = random.uniform(-self.shake, self.shake) if self.shake else 0
         oy = random.uniform(-self.shake, self.shake) if self.shake else 0
         surf.save_clip() if False else None
-        draw_background(surf, now)
+        effective_wave = self.wave_no if self.phase == "wave" else self.wave_no + 1
+        storm = max(0.0, min(1.0, (effective_wave - 9) / 4.0))  # storm builds from Wave 10, full by Wave 13
+        draw_background(surf, now, storm)
         # build plots (top-down grid)
         for i, (x, y) in enumerate(SLOTS):
             r = pygame.Rect(x - 34, y - 34, 68, 68)
@@ -909,6 +1072,8 @@ class Game:
             p.draw(surf)
         for p in self.particles:
             p.draw(surf)
+        for f in self.floaters:
+            f.draw(surf, fonts["small"])
         if ox or oy:  # cheap shake: blit a shifted copy is overkill; shake is visual via particles/message
             pass
         self.draw_hud(surf, fonts)
@@ -920,7 +1085,7 @@ class Game:
             f"Wave: {self.wave_no}" + ("" if self.phase != 'build' else " (next: " + str(self.wave_no + 1) + ")"),
             f"Money: ${self.money}",
             f"City HP: {self.city_hp}/{self.city_max}",
-            f"Phase: {'BUILD - press SPACE' if self.phase == 'build' else 'WAVE INCOMING!' if self.phase == 'wave' else 'GAME OVER'}",
+            f"Phase: {'BUILD - press SPACE' if self.phase == 'build' else 'WAVE INCOMING!' if self.phase == 'wave' else 'VICTORY!' if self.phase == 'win' else 'GAME OVER'}",
             f"Destroyed: {self.kills}",
         ]
         x = 16
@@ -935,7 +1100,7 @@ class Game:
         # bottom bar
         pygame.draw.rect(surf, (18, 28, 42), (0, HEIGHT - 74, WIDTH, 74))
         lines = [
-            "Click a plot, then:  [1] Wall $50    [2] Cannon $100    [3] Frost $120    [U] Upgrade $75    [X] Sell",
+            "Click a plot:  [1] Wall $50  [2] Cannon $100  [3] Frost $120  [4] Mortar $150  [U] Upgrade $75  [X] Sell",
             "SPACE wave    T repair defense    P pause    M mute    N music" + ("    *** PAUSED ***" if self.paused else ""),
         ]
         for i, line in enumerate(lines):
@@ -987,6 +1152,18 @@ class Game:
             surf.blit(t2, (WIDTH // 2 - t2.get_width() // 2, 335))
             t3 = mid.render("Press ENTER to play again", True, GOLD)
             surf.blit(t3, (WIDTH // 2 - t3.get_width() // 2, 385))
+        if self.phase == "win":
+            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            overlay.fill((8, 20, 12, 185))
+            surf.blit(overlay, (0, 0))
+            t = big.render("YOU SAVED THE CITY!", True, GREEN)
+            surf.blit(t, (WIDTH // 2 - t.get_width() // 2, 270))
+            t2 = mid.render(f"You survived all {WIN_WAVE} waves and destroyed {self.kills} tsunami(s). The storm is over.", True, WHITE)
+            surf.blit(t2, (WIDTH // 2 - t2.get_width() // 2, 325))
+            t3 = mid.render("Press ENTER for ENDLESS MODE - how far can you go?", True, GOLD)
+            surf.blit(t3, (WIDTH // 2 - t3.get_width() // 2, 380))
+            t4 = small.render("ESC to quit", True, WHITE)
+            surf.blit(t4, (WIDTH // 2 - t4.get_width() // 2, 420))
         if self.phase == "menu":
             self.draw_menu(surf, fonts)
         elif self.phase == "changelog":
@@ -1004,6 +1181,8 @@ class Game:
         surf.blit(t2, (WIDTH // 2 - t2.get_width() // 2, 205))
         t3 = small.render("Build on the 12 plots. Stop the waves before they reach the city.", True, WHITE)
         surf.blit(t3, (WIDTH // 2 - t3.get_width() // 2, 245))
+        t_stats = small.render(f"Best wave: {STATS.get('best_wave', 0)}    Total destroyed: {STATS.get('total_kills', 0)}    Victories: {STATS.get('victories', 0)}    Games played: {STATS.get('games_played', 0)}", True, GOLD)
+        surf.blit(t_stats, (WIDTH // 2 - t_stats.get_width() // 2, 268))
         for rect, label, colour in [(PLAY_BUTTON, "PLAY", GREEN), (CHANGELOG_BUTTON, "CHANGELOG", (70, 140, 200)), (QUIT_BUTTON, "QUIT", (150, 90, 90))]:
             pygame.draw.rect(surf, colour, rect, border_radius=10)
             pygame.draw.rect(surf, WHITE, rect, 2, border_radius=10)
@@ -1083,12 +1262,21 @@ def main():
                 game.selected = 2
                 game.money += 200
                 game.build("frost")
+                game.selected = 3
+                game.build("mortar")
+                assert game.structures[3].kind == "mortar"
             if frames == 7:
                 # exercise structure repair: damage the cannon, repair it, expect full HP
                 game.structures[0].hp = 10
                 game.selected = 0
                 game.repair_selected()
                 assert game.structures[0].hp == game.structures[0].max_hp, "repair_selected failed"
+            if frames == 8:
+                # wave-kind sanity: boss is huge, surge is faster, golden pays 3x
+                assert Wave(5, 1.0, "boss").thickness > 300
+                assert Wave(5, 1.0, "boss").max_hp > Wave(5, 1.0).max_hp * 3
+                assert Wave(3, 1.0, "surge").speed > Wave(3, 1.0).speed
+                assert Wave(3, 1.0, "golden").bounty_mult == 3.0
             if frames == 10:
                 game.start_wave()
             if frames > 300:
@@ -1104,6 +1292,7 @@ def main():
                 if game.phase == "menu":
                     if PLAY_BUTTON.collidepoint(event.pos):
                         game.phase = "build"
+                        _record_game_start()
                         game.say("Build defenses, then press SPACE to start Wave 1!", 5)
                         SFX.play("click", 50)
                     elif CHANGELOG_BUTTON.collidepoint(event.pos):
@@ -1130,10 +1319,20 @@ def main():
                     game = Game()
                     game.selected = 0
                     game.phase = "build"  # restart goes straight into a new game, not the menu
+                    _record_game_start()
+                    continue
+                if game.phase == "win" and event.key == pygame.K_RETURN:
+                    game.endless = True
+                    game.phase = "build"
+                    game.say("ENDLESS MODE - how far can you go? SPACE for the next wave!", 5)
+                    continue
+                if game.phase == "win" and event.key == pygame.K_ESCAPE:
+                    running = False
                     continue
                 if game.phase == "menu":
                     if event.key in (pygame.K_RETURN, pygame.K_SPACE):
                         game.phase = "build"
+                        _record_game_start()
                         game.say("Build defenses, then press SPACE to start Wave 1!", 5)
                     elif event.key == pygame.K_c:
                         game.phase = "changelog"
@@ -1152,6 +1351,8 @@ def main():
                     game.build("cannon")
                 elif event.key == pygame.K_3:
                     game.build("frost")
+                elif event.key == pygame.K_4:
+                    game.build("mortar")
                 elif event.key == pygame.K_u:
                     game.upgrade_selected()
                 elif event.key == pygame.K_x:
