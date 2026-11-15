@@ -2,10 +2,12 @@
 
 All notable changes, newest first. The same list is shown in-game under **Changelog** on the main menu.
 
+## v1.4.1
+- The game now downloads missing music files **by itself** at startup (`ensure_assets()` - URLs derived from `update_config.json`, with the repo as fallback). Since the game file is the one thing every launcher version auto-updates, existing players receive the real music automatically with this update - **no new zip needs to be sent to anyone, for this or future asset updates.** The launcher also supports this via `extra_files` for brand-new installs.
+
 ## v1.4.0
 - Real background music: CC0 (public domain) orchestral tracks by Dizzy Crow from OpenGameArt - a calm loop for menu/build and a matching fight loop for waves, in `music/build.ogg` and `music/battle.ogg`. See `MUSIC_LICENSES.md`.
 - The synthesized music remains in the game as an automatic fallback if the `music/` folder is missing.
-- The game now downloads missing music files **by itself** at startup (and the launcher can too, via `extra_files`). Since the game file is what every launcher auto-updates, existing players receive the real music automatically with this update - **no new zip needs to be sent to anyone, for this or future asset updates.**
 
 ## v1.3.0
 - Main menu with Play / Changelog / Quit (calm music plays behind it).

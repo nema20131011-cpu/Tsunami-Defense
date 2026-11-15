@@ -59,10 +59,11 @@ REPAIR_AMOUNT = 20
 SELL_REFUND = 0.7
 STRUCT_REPAIR_PER_HP = 0.35  # $ per missing HP to fully repair a tower/wall (min $10)
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 CHANGELOG = [
-    ("1.4.0", ["Real music: CC0 orchestral tracks by Dizzy Crow - calm + fight loops", "Synthesized music stays as a fallback if the music folder is missing", "See MUSIC_LICENSES.md for sources - the tracks are public domain (CC0)", "The game downloads missing music by itself at startup - existing players need no new zip"]),
+    ("1.4.1", ["The game now downloads missing music BY ITSELF at startup", "Existing players get the real tracks with this update - no new zip needed", "Works with any launcher version, even the original one"]),
+    ("1.4.0", ["Real music: CC0 orchestral tracks by Dizzy Crow - calm + fight loops", "Synthesized music stays as a fallback if the music folder is missing", "See MUSIC_LICENSES.md for sources - the tracks are public domain (CC0)"]),
     ("1.3.0", ["Main menu with Play / Changelog / Quit", "Repair towers and walls too: select one, press T or click REPAIR DEFENSE", "Structure repair is a full repair; cost scales with the damage"]),
     ("1.2.0", ["Upgrades now cap at Level 10", "Cannon upgrades also add range + fire rate; Frost adds range only", "Difficulty rebalanced: gentler wave HP growth, more starting money"]),
     ("1.1.0", ["Top-down view: 3 lanes, 12 build plots, city rooftops", "Clickable REPAIR CITY button"]),
@@ -631,6 +632,62 @@ def _update_checker_loop():
         time.sleep(60)
 
 
+# ---------------------------------------------------------------- assets
+# Files the game downloads BY ITSELF when missing (currently the music).
+# This lives in the game file - not only in the launcher - because the game
+# file is the one thing every player's launcher auto-updates, even an old
+# launcher with an old config. Result: existing players receive new assets
+# with a normal update; nobody ever needs a fresh zip for added files.
+ASSET_FILES = [("music/build.ogg", 100000), ("music/battle.ogg", 100000)]
+ASSET_REPO_ROOT = "https://raw.githubusercontent.com/nema20131011-cpu/Tsunami-Defense/main/"
+
+
+def ensure_assets():
+    """Download missing/too-small asset files before the music loads.
+    URLs come from update_config.json when possible (extra_files entries,
+    else derived from game_url's folder); ASSET_REPO_ROOT is the fallback,
+    so even an old or missing config still finds the music. Silent on
+    failure: synthesized music plays this run and it retries next launch."""
+    base = os.path.dirname(os.path.abspath(__file__))
+    items = {}
+    cfg = _load_update_config()
+    root = ASSET_REPO_ROOT
+    if cfg:
+        game_url = str(cfg.get("game_url", "")).strip()
+        if game_url and "YOUR_" not in game_url:
+            root = game_url.rsplit("/", 1)[0] + "/"
+        for entry in cfg.get("extra_files", []) or []:
+            try:
+                rel = str(entry.get("path", "")).strip()
+                url = str(entry.get("url", "")).strip()
+                if rel and url:
+                    items[rel] = (url, int(entry.get("min_size_bytes", 1000) or 1000))
+            except Exception:
+                pass
+    for rel, min_size in ASSET_FILES:
+        items.setdefault(rel, (root + rel, min_size))
+    for rel, (url, min_size) in items.items():
+        try:
+            dest = os.path.join(base, rel)
+            if os.path.exists(dest) and os.path.getsize(dest) >= min_size:
+                continue
+            req = urllib.request.Request(url, headers={"User-Agent": "TsunamiDefense"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = resp.read()
+            if len(data) < min_size:
+                continue
+            folder = os.path.dirname(dest)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            tmp = dest + ".tmp"
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, dest)
+            print(f"Downloaded missing asset: {rel} ({len(data)} bytes)")
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- game
 class Game:
     def __init__(self):
@@ -994,6 +1051,7 @@ def main():
         os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
     pygame.init()
     SFX.init()
+    ensure_assets()  # fetch missing music files before the music loads
     MUSIC.init()
     if not test_mode:
         threading.Thread(target=_update_checker_loop, daemon=True).start()
