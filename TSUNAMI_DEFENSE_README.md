@@ -33,7 +33,7 @@ All sounds are generated in code (no audio files needed): cannon and frost shots
 
 ## Music
 
-Also generated in code — two seamless loops over the same chord progression (Am – F – C – G):
+Real orchestral tracks, downloaded from OpenGameArt — **CC0 / public domain**, by Dizzy Crow (see `MUSIC_LICENSES.md`). They live in the `music/` folder - and the game downloads them automatically at startup if they're missing, so existing players never need a new zip for music or other assets (including the folder in a zip for a brand-new player just saves them that first download). If the folder is missing, the game falls back to its original synthesized loops (same chord progression, Am – F – C – G), which are described below:
 
 - **Build phase:** a calm, slow loop (92 BPM) — soft chord pads, gentle bass, and a light arpeggio while you plan and build.
 - **Wave phase:** a fast, driving battle loop (138 BPM) — pounding kick drum, driving bass, snare/hat percussion, chord stabs, and a lead melody. It kicks in automatically when a wave starts, switches back when you clear the round, pauses when you pause, and fades out on game over.

@@ -59,9 +59,10 @@ REPAIR_AMOUNT = 20
 SELL_REFUND = 0.7
 STRUCT_REPAIR_PER_HP = 0.35  # $ per missing HP to fully repair a tower/wall (min $10)
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 CHANGELOG = [
+    ("1.4.0", ["Real music: CC0 orchestral tracks by Dizzy Crow - calm + fight loops", "Synthesized music stays as a fallback if the music folder is missing", "See MUSIC_LICENSES.md for sources - the tracks are public domain (CC0)", "The game downloads missing music by itself at startup - existing players need no new zip"]),
     ("1.3.0", ["Main menu with Play / Changelog / Quit", "Repair towers and walls too: select one, press T or click REPAIR DEFENSE", "Structure repair is a full repair; cost scales with the damage"]),
     ("1.2.0", ["Upgrades now cap at Level 10", "Cannon upgrades also add range + fire rate; Frost adds range only", "Difficulty rebalanced: gentler wave HP growth, more starting money"]),
     ("1.1.0", ["Top-down view: 3 lanes, 12 build plots, city rooftops", "Clickable REPAIR CITY button"]),
@@ -279,14 +280,25 @@ class MusicPlayer:
         self.tracks = {}
         self.channel = None
         self.current = None
+        self.source = None  # "files" (downloaded CC0 tracks) or "synth" (fallback)
 
     def init(self):
         try:
             if not pygame.mixer.get_init():
                 return
-            self.tracks = {"build": _render_music_loop("build"), "battle": _render_music_loop("battle")}
             self.channel = pygame.mixer.Channel(0)
             self.channel.set_volume(0.45)
+            music_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "music")
+            build_path = os.path.join(music_dir, "build.ogg")
+            battle_path = os.path.join(music_dir, "battle.ogg")
+            if os.path.exists(build_path) and os.path.exists(battle_path):
+                # Downloaded CC0 tracks (see MUSIC_LICENSES.md) - preferred
+                self.tracks = {"build": pygame.mixer.Sound(build_path), "battle": pygame.mixer.Sound(battle_path)}
+                self.source = "files"
+            else:
+                # Fallback so the game always has music: synthesized loops
+                self.tracks = {"build": _render_music_loop("build"), "battle": _render_music_loop("battle")}
+                self.source = "synth"
             self.enabled = True
             self.play("build")
         except Exception as exc:  # music is optional - game runs without it
@@ -1025,7 +1037,7 @@ def main():
                 print(f"SMOKE TEST OK: frames={frames} wave={game.wave_no} "
                       f"city_hp={game.city_hp} money={game.money} waves_alive={len(game.waves)} "
                       f"sfx_enabled={SFX.enabled} sfx_sounds={len(SFX.sounds)} "
-                      f"music_enabled={MUSIC.enabled} music_tracks={len(MUSIC.tracks)} music_current={MUSIC.current}")
+                      f"music_enabled={MUSIC.enabled} music_tracks={len(MUSIC.tracks)} music_current={MUSIC.current} music_source={MUSIC.source}")
                 running = False
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
