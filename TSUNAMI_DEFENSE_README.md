@@ -20,6 +20,8 @@ python tsunami_defense.py
 - Click a built defense to select it: `U` upgrade ($75, max **Level 10**), `X` sell (70% refund)
 - Upgrades raise damage + HP for both towers. **Cannon** also gains +30 range and faster fire per level (0.55s -> 0.25s per shot). **Frost** also gains +30 range per level, but its fire rate does *not* speed up - it stays 0.85s (its slow effect is its strength). Walls just gain a lot of HP.
 - `R` — Repair city ($75, +20 HP) — or click the green **REPAIR CITY** button in the bottom-right
+- `T` — Fully repair the selected tower/wall — or click the blue **REPAIR UNIT** button next to it. Cost scales with the damage ($0.35 per missing HP, min $10); the button shows the exact cost.
+- The game starts at a **main menu** (Play / Changelog / Quit). The full version history is in `CHANGELOG.md` and on the menu's Changelog screen.
 - `SPACE` — Start the next wave
 - `P` — Pause, `Esc` — Quit
 - `M` — Mute / unmute sound effects + music

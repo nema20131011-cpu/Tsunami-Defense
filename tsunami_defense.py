@@ -44,7 +44,12 @@ FPS = 60
 LANE_YS = [150, 330, 510]
 SLOT_COLS_X = [575, 695, 815, 925]
 SLOTS = [(x, y) for y in LANE_YS for x in SLOT_COLS_X]  # 12 build plots
-REPAIR_BUTTON = pygame.Rect(1010, HEIGHT - 68, 254, 56)
+REPAIR_BUTTON = pygame.Rect(1064, HEIGHT - 68, 200, 56)
+STRUCT_REPAIR_BUTTON = pygame.Rect(852, HEIGHT - 68, 200, 56)
+PLAY_BUTTON = pygame.Rect(490, 292, 300, 58)
+CHANGELOG_BUTTON = pygame.Rect(490, 366, 300, 58)
+QUIT_BUTTON = pygame.Rect(490, 440, 300, 58)
+BACK_BUTTON = pygame.Rect(490, 610, 300, 50)
 
 COSTS = {"wall": 50, "cannon": 100, "frost": 120}
 UPGRADE_COST = 75
@@ -52,8 +57,16 @@ MAX_LEVEL = 10
 REPAIR_COST = 75
 REPAIR_AMOUNT = 20
 SELL_REFUND = 0.7
+STRUCT_REPAIR_PER_HP = 0.35  # $ per missing HP to fully repair a tower/wall (min $10)
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
+
+CHANGELOG = [
+    ("1.3.0", ["Main menu with Play / Changelog / Quit", "Repair towers and walls too: select one, press T or click REPAIR DEFENSE", "Structure repair is a full repair; cost scales with the damage"]),
+    ("1.2.0", ["Upgrades now cap at Level 10", "Cannon upgrades also add range + fire rate; Frost adds range only", "Difficulty rebalanced: gentler wave HP growth, more starting money"]),
+    ("1.1.0", ["Top-down view: 3 lanes, 12 build plots, city rooftops", "Clickable REPAIR CITY button"]),
+    ("1.0.0", ["First release: waves, Wall / Cannon / Frost, upgrades, selling", "Synthesized sound effects + music, and the auto-update launcher"]),
+]
 UPDATE_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "update_config.json")
 
 # colours
@@ -297,7 +310,7 @@ class MusicPlayer:
     def refresh(self, phase, paused):
         if not self.enabled or not self.music_on:
             return
-        desired = "battle" if phase == "wave" else "build" if phase == "build" else None
+        desired = "battle" if phase == "wave" else "build" if phase in ("build", "menu", "changelog") else None
         if desired is None:  # game over - fade the music out
             if self.current is not None:
                 self.channel.fadeout(350)
@@ -613,7 +626,7 @@ class Game:
         self.city_hp = 100
         self.city_max = 100
         self.wave_no = 0
-        self.phase = "build"  # build | wave | over | win
+        self.phase = "menu"  # menu | changelog | build | wave | over
         self.structures = {}  # slot -> Structure
         self.selected = None  # slot index or None
         self.waves = []
@@ -686,6 +699,29 @@ class Game:
             self.say(f"City repaired +{REPAIR_AMOUNT} HP.")
             SFX.play("repair")
 
+    def structure_repair_cost(self, s):
+        missing = s.max_hp - s.hp
+        return max(10, math.ceil(missing * STRUCT_REPAIR_PER_HP)) if missing > 0 else 0
+
+    def repair_selected(self):
+        s = self.structures.get(self.selected) if self.selected is not None else None
+        if not s:
+            self.say("Select a built tower or wall to repair it.")
+            return
+        if s.hp >= s.max_hp:
+            self.say(f"That {s.kind} is already at full HP.")
+            return
+        cost = self.structure_repair_cost(s)
+        if self.money < cost:
+            self.say(f"Repairing that {s.kind} costs ${cost}.")
+            SFX.play("error", 150)
+            return
+        self.money -= cost
+        healed = int(s.max_hp - s.hp)
+        s.hp = s.max_hp
+        self.say(f"Repaired {s.kind} +{healed} HP (${cost}).")
+        SFX.play("repair")
+
     def start_wave(self):
         if self.phase != "build":
             return
@@ -700,7 +736,7 @@ class Game:
 
     # ----- update
     def update(self, dt, now):
-        if self.paused or self.phase == "over":
+        if self.paused or self.phase in ("over", "menu", "changelog"):
             return
         self.msg_timer = max(0, self.msg_timer - dt)
         self.shake = max(0, self.shake - dt * 22)
@@ -831,7 +867,7 @@ class Game:
         pygame.draw.rect(surf, (18, 28, 42), (0, HEIGHT - 74, WIDTH, 74))
         lines = [
             "Click a plot, then:  [1] Wall $50    [2] Cannon $100    [3] Frost $120    [U] Upgrade $75    [X] Sell",
-            "SPACE wave    P pause    M mute    N music" + ("    *** PAUSED ***" if self.paused else ""),
+            "SPACE wave    T repair defense    P pause    M mute    N music" + ("    *** PAUSED ***" if self.paused else ""),
         ]
         for i, line in enumerate(lines):
             surf.blit(small.render(line, True, WHITE), (16, HEIGHT - 66 + i * 26))
@@ -847,6 +883,17 @@ class Game:
         surf.blit(rt, (REPAIR_BUTTON.centerx - rt.get_width() // 2, REPAIR_BUTTON.top + 6))
         rt2 = small.render(f"${REPAIR_COST}  +{REPAIR_AMOUNT} HP  [R]", True, WHITE)
         surf.blit(rt2, (REPAIR_BUTTON.centerx - rt2.get_width() // 2, REPAIR_BUTTON.top + 32))
+        # clickable Repair Defense button - repairs the SELECTED tower/wall (T key too)
+        sel = self.structures.get(self.selected) if self.selected is not None else None
+        s_cost = self.structure_repair_cost(sel) if sel else 0
+        can_srepair = bool(sel) and s_cost > 0 and self.money >= s_cost
+        pygame.draw.rect(surf, (70, 140, 200) if can_srepair else (55, 75, 92), STRUCT_REPAIR_BUTTON, border_radius=8)
+        pygame.draw.rect(surf, WHITE, STRUCT_REPAIR_BUTTON, 2, border_radius=8)
+        st = mid.render("REPAIR UNIT", True, WHITE)
+        surf.blit(st, (STRUCT_REPAIR_BUTTON.centerx - st.get_width() // 2, STRUCT_REPAIR_BUTTON.top + 6))
+        s_label = f"${s_cost} FULL  [T]" if sel and s_cost > 0 else "FULL HP  [T]" if sel else "SELECT ONE  [T]"
+        st2 = small.render(s_label, True, WHITE)
+        surf.blit(st2, (STRUCT_REPAIR_BUTTON.centerx - st2.get_width() // 2, STRUCT_REPAIR_BUTTON.top + 32))
         if self.msg_timer > 0 and self.message:
             t = big.render(self.message, True, WHITE)
             bg = pygame.Rect(WIDTH // 2 - t.get_width() // 2 - 14, 66, t.get_width() + 28, 46)
@@ -871,6 +918,53 @@ class Game:
             surf.blit(t2, (WIDTH // 2 - t2.get_width() // 2, 335))
             t3 = mid.render("Press ENTER to play again", True, GOLD)
             surf.blit(t3, (WIDTH // 2 - t3.get_width() // 2, 385))
+        if self.phase == "menu":
+            self.draw_menu(surf, fonts)
+        elif self.phase == "changelog":
+            self.draw_changelog(surf, fonts)
+
+    # ----- menu / changelog screens
+    def draw_menu(self, surf, fonts):
+        big, mid, small = fonts["big"], fonts["mid"], fonts["small"]
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((8, 14, 24, 205))
+        surf.blit(overlay, (0, 0))
+        t = big.render("TSUNAMI DEFENSE", True, WHITE)
+        surf.blit(t, (WIDTH // 2 - t.get_width() // 2, 150))
+        t2 = mid.render(f"v{VERSION}  -  top-down tower defense", True, GOLD)
+        surf.blit(t2, (WIDTH // 2 - t2.get_width() // 2, 205))
+        t3 = small.render("Build on the 12 plots. Stop the waves before they reach the city.", True, WHITE)
+        surf.blit(t3, (WIDTH // 2 - t3.get_width() // 2, 245))
+        for rect, label, colour in [(PLAY_BUTTON, "PLAY", GREEN), (CHANGELOG_BUTTON, "CHANGELOG", (70, 140, 200)), (QUIT_BUTTON, "QUIT", (150, 90, 90))]:
+            pygame.draw.rect(surf, colour, rect, border_radius=10)
+            pygame.draw.rect(surf, WHITE, rect, 2, border_radius=10)
+            bt = mid.render(label, True, WHITE)
+            surf.blit(bt, (rect.centerx - bt.get_width() // 2, rect.centery - bt.get_height() // 2))
+        t4 = small.render("ENTER play    C changelog    ESC quit", True, WHITE)
+        surf.blit(t4, (WIDTH // 2 - t4.get_width() // 2, 540))
+
+    def draw_changelog(self, surf, fonts):
+        big, mid, small = fonts["big"], fonts["mid"], fonts["small"]
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((8, 14, 24, 215))
+        surf.blit(overlay, (0, 0))
+        panel = pygame.Rect(140, 60, 1000, 610)
+        pygame.draw.rect(surf, (18, 28, 42), panel, border_radius=12)
+        pygame.draw.rect(surf, WHITE, panel, 2, border_radius=12)
+        t = big.render("CHANGELOG", True, WHITE)
+        surf.blit(t, (WIDTH // 2 - t.get_width() // 2, 82))
+        y = 140
+        for version, lines in CHANGELOG:
+            surf.blit(mid.render(f"v{version}", True, GOLD), (190, y))
+            y += 30
+            for line in lines:
+                surf.blit(small.render("- " + line, True, WHITE), (210, y))
+                y += 24
+            y += 12
+        pygame.draw.rect(surf, (70, 140, 200), BACK_BUTTON, border_radius=10)
+        pygame.draw.rect(surf, WHITE, BACK_BUTTON, 2, border_radius=10)
+        bt = mid.render("BACK", True, WHITE)
+        surf.blit(bt, (BACK_BUTTON.centerx - bt.get_width() // 2, BACK_BUTTON.centery - bt.get_height() // 2))
 
 
 def slot_at(pos):
@@ -902,6 +996,8 @@ def main():
     game = Game()
     # a friendly starting setup hint: pre-select first slot
     game.selected = 0
+    if test_mode:
+        game.phase = "build"  # smoke test skips the main menu
     frames = 0
     running = True
     while running:
@@ -917,6 +1013,12 @@ def main():
                 game.selected = 2
                 game.money += 200
                 game.build("frost")
+            if frames == 7:
+                # exercise structure repair: damage the cannon, repair it, expect full HP
+                game.structures[0].hp = 10
+                game.selected = 0
+                game.repair_selected()
+                assert game.structures[0].hp == game.structures[0].max_hp, "repair_selected failed"
             if frames == 10:
                 game.start_wave()
             if frames > 300:
@@ -929,7 +1031,23 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if REPAIR_BUTTON.collidepoint(event.pos):
+                if game.phase == "menu":
+                    if PLAY_BUTTON.collidepoint(event.pos):
+                        game.phase = "build"
+                        game.say("Build defenses, then press SPACE to start Wave 1!", 5)
+                        SFX.play("click", 50)
+                    elif CHANGELOG_BUTTON.collidepoint(event.pos):
+                        game.phase = "changelog"
+                        SFX.play("click", 50)
+                    elif QUIT_BUTTON.collidepoint(event.pos):
+                        running = False
+                elif game.phase == "changelog":
+                    game.phase = "menu"
+                    SFX.play("click", 50)
+                elif STRUCT_REPAIR_BUTTON.collidepoint(event.pos):
+                    game.repair_selected()
+                    SFX.play("click", 50)
+                elif REPAIR_BUTTON.collidepoint(event.pos):
                     game.repair()
                     SFX.play("click", 50)
                 else:
@@ -941,6 +1059,20 @@ def main():
                 if game.phase == "over" and event.key in (pygame.K_RETURN, pygame.K_r):
                     game = Game()
                     game.selected = 0
+                    game.phase = "build"  # restart goes straight into a new game, not the menu
+                    continue
+                if game.phase == "menu":
+                    if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        game.phase = "build"
+                        game.say("Build defenses, then press SPACE to start Wave 1!", 5)
+                    elif event.key == pygame.K_c:
+                        game.phase = "changelog"
+                    elif event.key == pygame.K_ESCAPE:
+                        running = False
+                    continue
+                if game.phase == "changelog":
+                    if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE, pygame.K_c):
+                        game.phase = "menu"
                     continue
                 if event.key == pygame.K_SPACE:
                     game.start_wave()
@@ -956,6 +1088,8 @@ def main():
                     game.sell_selected()
                 elif event.key == pygame.K_r:
                     game.repair()
+                elif event.key == pygame.K_t:
+                    game.repair_selected()
                 elif event.key == pygame.K_p:
                     game.paused = not game.paused
                 elif event.key == pygame.K_m:
