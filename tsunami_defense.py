@@ -48,11 +48,12 @@ REPAIR_BUTTON = pygame.Rect(1010, HEIGHT - 68, 254, 56)
 
 COSTS = {"wall": 50, "cannon": 100, "frost": 120}
 UPGRADE_COST = 75
+MAX_LEVEL = 10
 REPAIR_COST = 75
 REPAIR_AMOUNT = 20
 SELL_REFUND = 0.7
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 UPDATE_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "update_config.json")
 
 # colours
@@ -324,9 +325,9 @@ class Wave:
         self.thickness = min(150, (104 + number * 4) * scale)
         self.height = self.thickness
         self.width = 150 + number * 6
-        self.max_hp = (110 * (1.55 ** (number - 1))) * scale
+        self.max_hp = (100 * (1.28 ** (number - 1))) * scale  # rebalanced: was 1.55x/wave (impossible by ~wave 10), now 1.28x
         self.hp = self.max_hp
-        self.speed = min(135, (52 + number * 6) * (0.95 + 0.05 * scale))
+        self.speed = min(105, (46 + number * 3.5) * (0.95 + 0.05 * scale))  # rebalanced: slower growth + lower cap = towers get more firing time
         self.x = -self.width - 30
         self.slow_until = 0
         self.bob_phase = random.uniform(0, math.tau)
@@ -403,13 +404,21 @@ class Structure:
 
     @property
     def range(self):
-        return 520 if self.kind in ("cannon", "frost") else 0
+        # +30 range per upgrade level for BOTH towers: Lv1 520 -> Lv10 790
+        return 520 + 30 * (self.level - 1) if self.kind in ("cannon", "frost") else 0
 
     @property
     def fire_rate(self):
-        return 0.55 if self.kind == "cannon" else 0.85
+        # Seconds between shots (lower = faster). CANNON only: fires faster per
+        # level, 0.55s at Lv1 -> 0.25s at Lv10. FROST is intentionally NOT
+        # sped up by upgrades (stays 0.85s) - it gains range + damage only.
+        if self.kind == "cannon":
+            return max(0.25, 0.55 - 0.033 * (self.level - 1))
+        return 0.85
 
     def upgrade(self):
+        if self.level >= MAX_LEVEL:
+            return
         self.level += 1
         if self.kind == "wall":
             self.max_hp += 130
@@ -449,7 +458,7 @@ class Structure:
             pygame.draw.circle(surf, WHITE, (self.x, self.y), 8)
         # level pips below + hp bar above (damaged only)
         for i in range(self.level):
-            pygame.draw.circle(surf, GOLD, (int(self.x + (i - (self.level - 1) / 2) * 14), r.bottom + 11), 4)
+            pygame.draw.circle(surf, GOLD, (int(self.x + (i - (self.level - 1) / 2) * 10), r.bottom + 11), 3)
         if self.hp < self.max_hp:
             w = 52
             pygame.draw.rect(surf, BLACK, (self.x - w / 2 - 1, r.top - 13, w + 2, 8))
@@ -600,7 +609,7 @@ def _update_checker_loop():
 # ---------------------------------------------------------------- game
 class Game:
     def __init__(self):
-        self.money = 170
+        self.money = 250  # rebalanced: was 170 - a bit more starting build freedom
         self.city_hp = 100
         self.city_max = 100
         self.wave_no = 0
@@ -654,6 +663,10 @@ class Game:
         if not s:
             self.say("Select a built defense to upgrade.")
             return
+        if s.level >= MAX_LEVEL:
+            self.say(f"That {s.kind} is already at MAX level {MAX_LEVEL}!")
+            SFX.play("error", 150)
+            return
         if self.money < UPGRADE_COST:
             self.say(f"Upgrade costs ${UPGRADE_COST}.")
             return
@@ -679,7 +692,7 @@ class Game:
         self.wave_no += 1
         self.phase = "wave"
         # round composition: 1 big wave, plus extra waves every other round
-        self.to_spawn = 1 + (self.wave_no - 1) // 2
+        self.to_spawn = min(4, 1 + (self.wave_no - 1) // 2)  # rebalanced: capped at 4 per round (was unlimited growth)
         self.spawn_timer = 0.0
         self.spawn_scale = 1.0
         self.say(f"Wave {self.wave_no} incoming! {self.to_spawn} tsunami(s)!", 3.5)
@@ -721,7 +734,7 @@ class Game:
                         self.particles.append(Particle(hitting.x, hitting.y + random.uniform(-45, 45), GREY))
             if w.hp <= 0 and not w.dead:
                 w.dead = True
-                bounty = int(55 + self.wave_no * 16)
+                bounty = int(65 + self.wave_no * 20)  # rebalanced: slightly richer kills
                 self.money += bounty
                 self.kills += 1
                 self.say(f"Wave destroyed! +${bounty}", 2.2)
@@ -731,7 +744,7 @@ class Game:
             elif w.front >= CITY_X and not w.hit_city:
                 w.hit_city = True
                 w.dead = True
-                dmg_city = int(min(38, 9 + self.wave_no * 3 + 18 * max(0, w.hp / w.max_hp)))
+                dmg_city = int(min(28, 7 + self.wave_no * 1.6 + 14 * max(0, w.hp / w.max_hp)))  # rebalanced: a leak hurts less (was up to 38)
                 self.city_hp -= dmg_city
                 self.shake = 13
                 self.say(f"The tsunami hit the city! -{dmg_city} HP", 3.5)
@@ -761,7 +774,7 @@ class Game:
         self.particles = [p for p in self.particles if p.life > 0]
         # round cleared?
         if self.phase == "wave" and self.to_spawn == 0 and not self.waves and self.city_hp > 0:
-            bonus = 30 + self.wave_no * 8
+            bonus = 50 + self.wave_no * 14  # rebalanced: bigger round-clear bonus
             self.money += bonus
             self.phase = "build"
             self.say(f"Wave {self.wave_no} cleared! Bonus +${bonus}. Build, then SPACE for Wave {self.wave_no + 1}.", 5)
